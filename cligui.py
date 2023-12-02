@@ -1,9 +1,10 @@
 import curses
 import time
+import string
 
 
 class App:
-    MODES = ("input", "instant", "sleep", "stop")
+    MODES = ("input", "instant", "sleep", "end")
     CTLMODES = ("widget", "function")
 
     def __init__(self):
@@ -12,6 +13,8 @@ class App:
         self.mode = "input"
         self.ctlmode = "widget"
         self.cfunc = None
+        self.tabnav = True
+        self.tabnav_pause = False
 
     def _main(self, stdscr):
         curses.curs_set(False)
@@ -38,16 +41,29 @@ class App:
             if self.mode == "input":
                 key = stdscr.getkey()
                 if self.ctlmode == "widget":
-                    self.widgets[self.focus]._dispatch(key)
+                    if key == "\t" and self.tabnav and not self.tabnav_pause:
+                        self._tabnav_next()
+                    else:
+                        self.widgets[self.focus]._dispatch(key)
             
             elif self.mode == "sleep":
                 time.sleep(1)
 
-            elif self.mode == "stop":
+            elif self.mode == "end":
                 break
 
         if self.endmsg:
             return self.endmsg
+
+    def _get_focusable(self):
+        return [widget for widget in self.widgets if widget.focusable]
+
+    def _tabnav_next(self):
+        new_focus = self.focus + 1
+        if new_focus >= len(self.widgets):
+            new_focus = 0
+
+        self.focus = new_focus
 
     def run(self):
         result = curses.wrapper(self._main)
@@ -55,18 +71,22 @@ class App:
 
     def end(self, message: str = None):
         self.endmsg = message
-        self.mode = "stop"
+        self.mode = "end"
         
 
 class Widget:
     EX_ONLY = "This class should be used for example purposes only."
 
-    def __init__(self, root: App):
+    def __init__(self, root: App, **kwargs):
         self.root = root
         self.x = None
         self.y = None
         self.w = None
         self.h = None
+
+        self.focusable = False
+
+        #self.id = kwargs.pop("id", None)
 
         self.root.widgets.append(self)
 
@@ -80,14 +100,25 @@ class Widget:
         self.style = self.root.style
         self.style_active = self.root.style_active
 
+    def _focus(self):
+        index = self.root.widgets.index(self)
+        self.root.focus = index
+
+    def _is_focused(self):
+        index = self.root.widgets.index(self)
+        if index == self.root.focus:
+            return True
+        else:
+            return False
+
     def _dispatch(self, key: str):
         print(f"Default Widget received key {key}. {self.EX_ONLY}")
 
     def _render(self, stdscr):
         print(f"Default Widget received Screen {stdscr} for render. {self.EX_ONLY}")
 
-    def _focus(self, stdscr):
-        print(f"Default Widget received Screen {stdscr} for focus render. {self.EX_ONLY}")
+    def _rfocus(self, stdscr):
+        print(f"Default Widget received Screen {stdscr} for render focus. {self.EX_ONLY}")
 
 
 class MenuOption:
@@ -106,6 +137,7 @@ class MenuOption:
 class Menu(Widget):
     def __init__(self, root: App, options: tuple[MenuOption], default: int = 0, *, horizontal: bool = False, on_change: callable = None):
         super().__init__(root)
+        self.focusable = True
         self.options = options
         self.active = default
         
@@ -187,8 +219,6 @@ class Menu(Widget):
                     else:
                         stdscr.addstr(opt_y, self.x-1, " ", self.style)
     
-    def _focus(self, stdscr):
-        pass
     
 
 class Text(Widget):
@@ -198,3 +228,41 @@ class Text(Widget):
 
     def _render(self, stdscr):
         stdscr.addstr(self.y, self.x, self.text, self.style)
+
+
+class Entry(Widget):
+    TYPEABLE = "abcdefghijklmnopqrstuvwxyzABC"
+
+    def __init__(self, root: App, *, enter_func: callable = None):
+        super().__init__(root)
+        self.focusable = True
+        self.enter_func = enter_func
+
+        self.contents = ""
+        self.cursor_pos = 0
+
+    def _dispatch(self, key: str):
+        if key in string.printable:
+            self.contents = self.contents[:self.cursor_pos] + key + self.contents[self.cursor_pos:]
+            self.cursor_pos += 1
+
+        elif key == "KEY_BACKSPACE":
+            self.contents = self.contents[:-1]
+
+        elif key == "\n":
+            if self.enter_func:
+                self.enter_func()
+
+        elif key == "KEY_RIGHT":
+            self.cursor_pos += 1
+            self.check_pos()
+
+        elif key == "KEY_LEFT":
+            self.cursor_pos -= 1
+            self.check_pos()
+
+    def _check_pos(self):
+        pass
+
+    def _render(self, stdscr):
+        pass
